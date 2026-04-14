@@ -1,4 +1,4 @@
-name: CI+Terraform Actions
+name: CI+Terraform+Docker 
 
 on:
   workflow_dispatch:
@@ -11,17 +11,16 @@ on:
           - plan
           - apply
           - destroy
-          
 
 jobs:
 
-  # ---------------- JOB 1: BUILD ----------------
   build:
     runs-on: ubuntu-latest
 
+    if: github.event.inputs.tf_action != 'destroy'   
+
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -35,17 +34,17 @@ jobs:
           docker tag simpletimeservice:latest karthikeyudu/simpletimeservice:${{ github.run_number }}
           docker push karthikeyudu/simpletimeservice:${{ github.run_number }}
 
-  # ---------------- JOB 2: TERRAFORM ----------------
   terraform:
     needs: build
     runs-on: ubuntu-latest
+
+    if: always()
 
     outputs:
       public_ip: ${{ steps.ip.outputs.ip }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Configure AWS
         uses: aws-actions/configure-aws-credentials@v4
@@ -54,8 +53,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v3
 
       - name: Terraform Init
         run: terraform init
@@ -85,12 +83,11 @@ jobs:
         if: github.event.inputs.tf_action == 'apply'
         run: echo "ip=$(terraform output -raw public_ip)" >> $GITHUB_OUTPUT
 
-  # ---------------- JOB 3: DEPLOY ----------------
   deploy:
     needs: terraform
     runs-on: ubuntu-latest
 
-    if: github.event.inputs.tf_action == 'apply'
+    if: github.event.inputs.tf_action == 'apply'  
 
     steps:
       - name: Wait for EC2
@@ -103,24 +100,12 @@ jobs:
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
-            echo "Connected to EC2"
-
+            echo "Connected to $(hostname)"
             sudo apt update -y
-            sudo apt install -y docker.io
-
-            sudo systemctl start docker
-            sudo systemctl enable docker
-
-            # Pull image using GitHub run number
-            sudo docker pull karthikeyudu/simpletimeservice:${{ github.run_number }}
-
-            # Stop old container
-            sudo docker stop app || true
-            sudo docker rm app || true
-
-            # Run new container
-            sudo docker run -d --name app -p 5000:5000 \
-              karthikeyudu/simpletimeservice:${{ github.run_number }}
+             docker pull karthikeyudu/simpletimeservice:${{ github.run_number }}
+             docker stop app || true
+             docker rm app || true
+             docker run -d --name app -p 5000:5000 karthikeyudu/simpletimeservice:${{ github.run_number }}
 
       - name: Print URL
         run: echo "App running at http://${{ needs.terraform.outputs.public_ip }}:5000"
