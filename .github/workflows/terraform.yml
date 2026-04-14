@@ -11,7 +11,7 @@ on:
         options:
           - plan
           - apply
-          - destory
+          - destroy   
 
 jobs:
   terraform:
@@ -33,16 +33,17 @@ jobs:
 
       - name: Terraform Action
         run: |
-         if [ "${{ github.event.inputs.tf_action }}" == "plan" ]; then
-          terraform plan -out=tfplan
+          if [ "${{ github.event.inputs.tf_action }}" == "plan" ]; then
+            terraform plan -out=tfplan
 
           elif [ "${{ github.event.inputs.tf_action }}" == "apply" ]; then
-           terraform plan -out=tfplan
-           terraform apply tfplan   
+            terraform plan -out=tfplan
+            terraform apply tfplan
 
-           elif [ "${{ github.event.inputs.tf_action }}" == "destroy" ]; then
-            terraform destroy -auto-approve  
-           else
-           echo "Invalid input"
-           exit 1
-       fi
+          elif [ "${{ github.event.inputs.tf_action }}" == "destroy" ]; then
+            terraform destroy -auto-approve
+
+          else
+            echo "Invalid input"
+            exit 1
+          fi
