@@ -2,6 +2,16 @@ provider "aws" {
   region = "us-east-1"
 }
 
+# ---------------- VARIABLES ----------------
+variable "image_tag" {
+  type = string
+}
+
+variable "docker_image" {
+  type    = string
+  default = "karthikeyudu/simpletimeservice"
+}
+
 # ---------------- VPC ----------------
 resource "aws_vpc" "main" {
   cidr_block = "10.0.0.0/16"
@@ -11,7 +21,7 @@ resource "aws_vpc" "main" {
   }
 }
 
-# ---------------- Internet Gateway ----------------
+# ---------------- INTERNET GATEWAY ----------------
 resource "aws_internet_gateway" "igw" {
   vpc_id = aws_vpc.main.id
 }
@@ -37,7 +47,7 @@ resource "aws_subnet" "private" {
   }
 }
 
-# ---------------- PUBLIC ROUTE TABLE ----------------
+# ---------------- ROUTE TABLE (PUBLIC) ----------------
 resource "aws_route_table" "public_rt" {
   vpc_id = aws_vpc.main.id
 
@@ -52,7 +62,7 @@ resource "aws_route_table_association" "public_assoc" {
   route_table_id = aws_route_table.public_rt.id
 }
 
-# ---------------- SECURITY GROUP (ALB) ----------------
+# ---------------- SECURITY GROUP: ALB ----------------
 resource "aws_security_group" "alb_sg" {
   vpc_id = aws_vpc.main.id
 
@@ -71,7 +81,7 @@ resource "aws_security_group" "alb_sg" {
   }
 }
 
-# ---------------- SECURITY GROUP (APP) ----------------
+# ---------------- SECURITY GROUP: APP ----------------
 resource "aws_security_group" "app_sg" {
   vpc_id = aws_vpc.main.id
 
@@ -90,7 +100,7 @@ resource "aws_security_group" "app_sg" {
   }
 }
 
-# ---------------- EC2 (PRIVATE SUBNET) ----------------
+# ---------------- EC2 INSTANCE (PRIVATE) ----------------
 resource "aws_instance" "app" {
   ami           = "ami-0ec10929233384c7f"
   instance_type = "t2.micro"
@@ -110,6 +120,12 @@ resource "aws_instance" "app" {
               systemctl start docker
               systemctl enable docker
 
+              echo "Pulling Docker image..."
+              docker pull ${var.docker_image}:${var.image_tag}
+
+              echo "Running container..."
+              docker run -d --name app -p 5000:5000 \
+                ${var.docker_image}:${var.image_tag}
               EOF
 
   tags = {
@@ -130,7 +146,7 @@ resource "aws_lb_target_group" "tg" {
   }
 }
 
-# ---------------- TARGET ATTACHMENT ----------------
+# ---------------- ATTACH EC2 TO TG ----------------
 resource "aws_lb_target_group_attachment" "attach" {
   target_group_arn = aws_lb_target_group.tg.arn
   target_id        = aws_instance.app.id
@@ -159,11 +175,7 @@ resource "aws_lb_listener" "listener" {
   }
 }
 
-# ---------------- OUTPUT ----------------
+# ---------------- OUTPUTS ----------------
 output "alb_dns" {
   value = aws_lb.alb.dns_name
-}
-
-output "private_instance_id" {
-  value = aws_instance.app.id
 }
