@@ -3,7 +3,7 @@ provider "aws" {
 }
 
 # ---------------- VPC ----------------
-resource "aws_vpc" "main_vpc" {
+resource "aws_vpc" "main" {
   cidr_block = "10.0.0.0/16"
 
   tags = {
@@ -11,9 +11,14 @@ resource "aws_vpc" "main_vpc" {
   }
 }
 
-# ---------------- Subnet ----------------
-resource "aws_subnet" "public_subnet" {
-  vpc_id                  = aws_vpc.main_vpc.id
+# ---------------- Internet Gateway ----------------
+resource "aws_internet_gateway" "igw" {
+  vpc_id = aws_vpc.main.id
+}
+
+# ---------------- PUBLIC SUBNET (ALB) ----------------
+resource "aws_subnet" "public" {
+  vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.1.0/24"
   map_public_ip_on_launch = true
 
@@ -22,57 +27,38 @@ resource "aws_subnet" "public_subnet" {
   }
 }
 
-# ---------------- Internet Gateway ----------------
-resource "aws_internet_gateway" "igw" {
-  vpc_id = aws_vpc.main_vpc.id
+# ---------------- PRIVATE SUBNET (EC2) ----------------
+resource "aws_subnet" "private" {
+  vpc_id     = aws_vpc.main.id
+  cidr_block = "10.0.2.0/24"
 
   tags = {
-    Name = "main-igw"
+    Name = "private-subnet"
   }
 }
 
-# ---------------- Route Table ----------------
+# ---------------- PUBLIC ROUTE TABLE ----------------
 resource "aws_route_table" "public_rt" {
-  vpc_id = aws_vpc.main_vpc.id
+  vpc_id = aws_vpc.main.id
 
   route {
     cidr_block = "0.0.0.0/0"
     gateway_id = aws_internet_gateway.igw.id
   }
-
-  tags = {
-    Name = "public-rt"
-  }
 }
 
-resource "aws_route_table_association" "rt_assoc" {
-  subnet_id      = aws_subnet.public_subnet.id
+resource "aws_route_table_association" "public_assoc" {
+  subnet_id      = aws_subnet.public.id
   route_table_id = aws_route_table.public_rt.id
 }
 
-# ---------------- Security Group ----------------
-resource "aws_security_group" "web_sg" {
-  name        = "web-sg"
-  description = "Allow SSH, HTTP, App"
-  vpc_id      = aws_vpc.main_vpc.id
-
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
+# ---------------- SECURITY GROUP (ALB) ----------------
+resource "aws_security_group" "alb_sg" {
+  vpc_id = aws_vpc.main.id
 
   ingress {
     from_port   = 80
     to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    from_port   = 5000
-    to_port     = 5000
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -83,53 +69,101 @@ resource "aws_security_group" "web_sg" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
+}
 
-  tags = {
-    Name = "web-sg"
+# ---------------- SECURITY GROUP (APP) ----------------
+resource "aws_security_group" "app_sg" {
+  vpc_id = aws_vpc.main.id
+
+  ingress {
+    from_port       = 5000
+    to_port         = 5000
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb_sg.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 }
 
-# ---------------- EC2 ----------------
-resource "aws_instance" "web_server" {
+# ---------------- EC2 (PRIVATE SUBNET) ----------------
+resource "aws_instance" "app" {
   ami           = "ami-0ec10929233384c7f"
   instance_type = "t2.micro"
 
-  subnet_id                   = aws_subnet.public_subnet.id
-  vpc_security_group_ids      = [aws_security_group.web_sg.id]
-  associate_public_ip_address = true
+  subnet_id              = aws_subnet.private.id
+  vpc_security_group_ids = [aws_security_group.app_sg.id]
 
-  key_name = "jboss"
+  associate_public_ip_address = false
 
   user_data = <<-EOF
               #!/bin/bash
               exec > /var/log/user-data.log 2>&1
 
-              echo "Starting setup..."
-
-              # Wait for apt lock
-              while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
-                echo "Waiting for apt lock..."
-                sleep 5
-              done
-
               apt update -y
-
-              # Install Docker
               apt install -y docker.io
+
               systemctl start docker
               systemctl enable docker
-              usermod -aG docker ubuntu
 
-              # Install Nginx
-              apt install -y nginx
-              systemctl start nginx
-              systemctl enable nginx
-
-              echo "Setup completed"
               EOF
 
   tags = {
-    Name = "web-server"
+    Name = "app-server"
   }
 }
 
+# ---------------- TARGET GROUP ----------------
+resource "aws_lb_target_group" "tg" {
+  name     = "app-tg"
+  port     = 5000
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.main.id
+
+  health_check {
+    path = "/"
+    port = "5000"
+  }
+}
+
+# ---------------- TARGET ATTACHMENT ----------------
+resource "aws_lb_target_group_attachment" "attach" {
+  target_group_arn = aws_lb_target_group.tg.arn
+  target_id        = aws_instance.app.id
+  port             = 5000
+}
+
+# ---------------- APPLICATION LOAD BALANCER ----------------
+resource "aws_lb" "alb" {
+  name               = "app-alb"
+  load_balancer_type = "application"
+  internal           = false
+
+  subnets         = [aws_subnet.public.id]
+  security_groups = [aws_security_group.alb_sg.id]
+}
+
+# ---------------- LISTENER ----------------
+resource "aws_lb_listener" "listener" {
+  load_balancer_arn = aws_lb.alb.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.tg.arn
+  }
+}
+
+# ---------------- OUTPUT ----------------
+output "alb_dns" {
+  value = aws_lb.alb.dns_name
+}
+
+output "private_instance_id" {
+  value = aws_instance.app.id
+}
