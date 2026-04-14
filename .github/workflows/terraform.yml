@@ -4,9 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       tf_action:
-        description: "Terraform action (plan/apply/destroy)"
+        description: "Terraform action"
         required: true
         default: "plan"
+        type: choice
+        options:
+          - init
+          - plan
+          - destory
 
 jobs:
   terraform:
@@ -24,11 +29,9 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
 
       - name: Terraform Init
-        working-directory: terraform
         run: terraform init
 
       - name: Terraform Action
-        working-directory: terraform
         run: |
           if [ "${{ github.event.inputs.tf_action }}" == "plan" ]; then
             terraform plan
