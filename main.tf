@@ -45,7 +45,6 @@ resource "aws_route_table" "public_rt" {
   }
 }
 
-# Associate Route Table
 resource "aws_route_table_association" "rt_assoc" {
   subnet_id      = aws_subnet.public_subnet.id
   route_table_id = aws_route_table.public_rt.id
@@ -54,11 +53,10 @@ resource "aws_route_table_association" "rt_assoc" {
 # ---------------- Security Group ----------------
 resource "aws_security_group" "web_sg" {
   name        = "web-sg"
-  description = "Allow SSH, HTTP, Flask"
+  description = "Allow SSH, HTTP, App"
   vpc_id      = aws_vpc.main_vpc.id
 
   ingress {
-    description = "SSH"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
@@ -66,7 +64,6 @@ resource "aws_security_group" "web_sg" {
   }
 
   ingress {
-    description = "HTTP"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
@@ -74,7 +71,6 @@ resource "aws_security_group" "web_sg" {
   }
 
   ingress {
-    description = "App Port"
     from_port   = 5000
     to_port     = 5000
     protocol    = "tcp"
@@ -93,8 +89,9 @@ resource "aws_security_group" "web_sg" {
   }
 }
 
+# ---------------- EC2 ----------------
 resource "aws_instance" "web_server" {
-  ami           = "ami-0ec10929233384c7f" 
+  ami           = "ami-0ec10929233384c7f"
   instance_type = "t2.micro"
 
   subnet_id                   = aws_subnet.public_subnet.id
@@ -105,8 +102,17 @@ resource "aws_instance" "web_server" {
 
   user_data = <<-EOF
               #!/bin/bash
+              exec > /var/log/user-data.log 2>&1
+
+              echo "Starting setup..."
+
+              # Wait for apt lock
+              while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+                echo "Waiting for apt lock..."
+                sleep 5
+              done
+
               apt update -y
-              apt upgrade -y
 
               # Install Docker
               apt install -y docker.io
@@ -119,9 +125,15 @@ resource "aws_instance" "web_server" {
               systemctl start nginx
               systemctl enable nginx
 
+              echo "Setup completed"
               EOF
 
   tags = {
     Name = "web-server"
   }
+}
+
+# ---------------- OUTPUT ----------------
+output "public_ip" {
+  value = aws_instance.web_server.public_ip
 }
