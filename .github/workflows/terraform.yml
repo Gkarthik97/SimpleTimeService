@@ -1,4 +1,4 @@
-name: CI CD Pipeline (No Terraform Variable)
+name: CI+Terraform Actions
 
 on:
   workflow_dispatch:
@@ -10,6 +10,7 @@ on:
         options:
           - plan
           - apply
+          - destroy
           
 
 jobs:
