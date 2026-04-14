@@ -23,9 +23,6 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event.inputs.tf_action != 'destroy'
 
-    outputs:
-      image_tag: ${{ github.run_number }}
-
     steps:
       - uses: actions/checkout@v4
 
@@ -45,8 +42,10 @@ jobs:
 
 # ---------------- TERRAFORM ----------------
   terraform:
-    needs: build
     runs-on: ubuntu-latest
+
+    # 🔥 ALWAYS RUN TERRAFORM (plan/apply/destroy)
+    if: always()
 
     outputs:
       alb_dns: ${{ steps.alb.outputs.alb_dns }}
@@ -66,8 +65,8 @@ jobs:
       - name: Terraform Init
         run: terraform init
 
-      # 🔥 PASS DOCKER IMAGE TAG TO TERRAFORM
       - name: Terraform Plan
+        if: github.event.inputs.tf_action != 'destroy'
         run: |
           terraform plan \
             -var="image_tag=${{ github.run_number }}" \
@@ -75,10 +74,9 @@ jobs:
 
       - name: Terraform Apply
         if: github.event.inputs.tf_action == 'apply'
-        run: |
-          terraform apply tfplan
+        run: terraform apply tfplan
 
-      - name: Destroy Infrastructure
+      - name: Terraform Destroy
         if: github.event.inputs.tf_action == 'destroy'
         run: terraform destroy -auto-approve
 
