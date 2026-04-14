@@ -1,0 +1,42 @@
+name: Terraform Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      tf_action:
+        description: "Terraform action (plan/apply/destroy)"
+        required: true
+        default: "plan"
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init
+
+      - name: Terraform Action
+        working-directory: terraform
+        run: |
+          if [ "${{ github.event.inputs.tf_action }}" == "plan" ]; then
+            terraform plan
+          elif [ "${{ github.event.inputs.tf_action }}" == "apply" ]; then
+            terraform apply
+          elif [ "${{ github.event.inputs.tf_action }}" == "destroy" ]; then
+            terraform destroy
+          else
+            echo "Invalid input"
+            exit 1
+          fi
