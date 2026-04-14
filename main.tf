@@ -1,5 +1,5 @@
 provider "aws" {
-  region = "us-east-1" 
+  region = "us-east-1"
 }
 
 # ---------------- VPC ----------------
@@ -93,16 +93,33 @@ resource "aws_security_group" "web_sg" {
   }
 }
 
-# ---------------- EC2 Instance ----------------
 resource "aws_instance" "web_server" {
-  ami           = "ami-0f58b397bc5c1f2e8" # Amazon Linux 2 (update if needed)
+  ami           = "ami-0ec10929233384c7f" 
   instance_type = "t2.micro"
 
   subnet_id                   = aws_subnet.public_subnet.id
   vpc_security_group_ids      = [aws_security_group.web_sg.id]
   associate_public_ip_address = true
 
-  key_name = "your-keypair-name" # Replace with your key
+  key_name = "jboss"
+
+  user_data = <<-EOF
+              #!/bin/bash
+              apt update -y
+              apt upgrade -y
+
+              # Install Docker
+              apt install -y docker.io
+              systemctl start docker
+              systemctl enable docker
+              usermod -aG docker ubuntu
+
+              # Install Nginx
+              apt install -y nginx
+              systemctl start nginx
+              systemctl enable nginx
+
+              EOF
 
   tags = {
     Name = "web-server"
