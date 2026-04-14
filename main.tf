@@ -175,7 +175,4 @@ resource "aws_lb_listener" "listener" {
   }
 }
 
-# ---------------- OUTPUTS ----------------
-output "alb_dns" {
-  value = aws_lb.alb.dns_name
-}
+
