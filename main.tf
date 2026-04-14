@@ -133,7 +133,3 @@ resource "aws_instance" "web_server" {
   }
 }
 
-# ---------------- OUTPUT ----------------
-output "public_ip" {
-  value = aws_instance.web_server.public_ip
-}
