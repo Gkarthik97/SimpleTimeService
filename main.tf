@@ -2,19 +2,12 @@ provider "aws" {
   region = "us-east-1"
 }
 
-# ---------------- VARIABLES ----------------
-variable "image_tag" {
-  type = string
-}
-
-variable "docker_image" {
-  type    = string
-  default = "karthikeyudu/simpletimeservice"
-}
-
 # ---------------- VPC ----------------
 resource "aws_vpc" "main" {
   cidr_block = "10.0.0.0/16"
+
+  enable_dns_support   = true
+  enable_dns_hostnames = true
 
   tags = {
     Name = "main-vpc"
@@ -26,42 +19,29 @@ resource "aws_internet_gateway" "igw" {
   vpc_id = aws_vpc.main.id
 }
 
-# ---------------- PUBLIC SUBNET 1 (ALB - AZ1) ----------------
+# ---------------- PUBLIC SUBNETS ----------------
 resource "aws_subnet" "public_1" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.1.0/24"
   availability_zone       = "us-east-1a"
   map_public_ip_on_launch = true
-
-  tags = {
-    Name = "public-subnet-1"
-  }
 }
 
-# ---------------- PUBLIC SUBNET 2 (ALB - AZ2) ----------------
 resource "aws_subnet" "public_2" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.2.0/24"
   availability_zone       = "us-east-1b"
   map_public_ip_on_launch = true
-
-  tags = {
-    Name = "public-subnet-2"
-  }
 }
 
-# ---------------- PRIVATE SUBNET (EC2) ----------------
+# ---------------- PRIVATE SUBNET ----------------
 resource "aws_subnet" "private" {
   vpc_id            = aws_vpc.main.id
   cidr_block        = "10.0.3.0/24"
   availability_zone = "us-east-1a"
-
-  tags = {
-    Name = "private-subnet"
-  }
 }
 
-# ---------------- ROUTE TABLE (PUBLIC) ----------------
+# ---------------- PUBLIC ROUTE TABLE ----------------
 resource "aws_route_table" "public_rt" {
   vpc_id = aws_vpc.main.id
 
@@ -79,6 +59,33 @@ resource "aws_route_table_association" "public_1" {
 resource "aws_route_table_association" "public_2" {
   subnet_id      = aws_subnet.public_2.id
   route_table_id = aws_route_table.public_rt.id
+}
+
+# ---------------- NAT GATEWAY ----------------
+resource "aws_eip" "nat_eip" {
+  domain = "vpc"
+}
+
+resource "aws_nat_gateway" "nat" {
+  allocation_id = aws_eip.nat_eip.id
+  subnet_id     = aws_subnet.public_1.id
+
+  depends_on = [aws_internet_gateway.igw]
+}
+
+# ---------------- PRIVATE ROUTE TABLE ----------------
+resource "aws_route_table" "private_rt" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.nat.id
+  }
+}
+
+resource "aws_route_table_association" "private_assoc" {
+  subnet_id      = aws_subnet.private.id
+  route_table_id = aws_route_table.private_rt.id
 }
 
 # ---------------- SECURITY GROUP: ALB ----------------
@@ -119,33 +126,70 @@ resource "aws_security_group" "app_sg" {
   }
 }
 
+# ---------------- IAM ROLE FOR SSM ----------------
+resource "aws_iam_role" "ec2_ssm_role" {
+  name = "ec2-ssm-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect = "Allow",
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      },
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "ssm_attach" {
+  role       = aws_iam_role.ec2_ssm_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_instance_profile" "ec2_profile" {
+  name = "ec2-ssm-profile"
+  role = aws_iam_role.ec2_ssm_role.name
+}
+
 # ---------------- EC2 (PRIVATE) ----------------
 resource "aws_instance" "app" {
-  ami           = "ami-0ec10929233384c7f"
+  ami           = "ami-053b0d53c279acc90" # Ubuntu
   instance_type = "t2.micro"
 
   subnet_id              = aws_subnet.private.id
   vpc_security_group_ids = [aws_security_group.app_sg.id]
+  iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
 
   associate_public_ip_address = false
 
   user_data = <<-EOF
-              #!/bin/bash
-              exec > /var/log/user-data.log 2>&1
+#!/bin/bash
+exec > /var/log/user-data.log 2>&1
 
-              apt update -y
-              apt install -y docker.io
+echo "START"
 
-              systemctl start docker
-              systemctl enable docker
+# Wait for network
+sleep 20
 
-              echo "Pulling Docker image..."
-              docker pull ${var.docker_image}:${var.image_tag}
+# Retry apt
+apt update -y || apt update -y
 
-              echo "Running container..."
-              docker run -d --name app -p 5000:5000 \
-                ${var.docker_image}:${var.image_tag}
-              EOF
+apt install -y docker.io
+
+systemctl start docker
+systemctl enable docker
+
+usermod -aG docker ubuntu
+
+sleep 10
+
+docker pull karthikeyudu/simpletimeservice:20
+
+docker run -d --name app --restart always -p 5000:5000 karthikeyudu/simpletimeservice:20
+
+echo "DONE"
+EOF
 
   tags = {
     Name = "app-server"
